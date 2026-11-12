@@ -1,5 +1,6 @@
 import "server-only"
 import { Zip, ZipDeflate, ZipPassThrough } from "fflate"
+import type PocketBase from "pocketbase"
 import { ClientResponseError, type RecordModel } from "pocketbase"
 import { ERROR_KEYS, type ErrorCounts, isAnnotated, normalizeErrors, totalErrors } from "@/lib/annotations"
 import { getCurrentUser, requireToken } from "@/lib/auth"
@@ -134,19 +135,24 @@ export async function listSamples(cursor?: SampleCursor): Promise<{ items: Saved
   return {
     total: cursor ? null : result.totalItems,
     next: result.items.length > PAGE_SIZE && last ? { created: last.created, id: last.id } : null,
-    items: page.map((r) => ({
-      id: r.id,
-      text: r.text,
-      language: r.language,
-      model: r.model,
-      seed: r.seed,
-      duration_s: r.duration_s,
-      note: r.note,
-      created: r.created,
-      speakerName: r.expand?.speaker?.name ?? null,
-      errorTotal: isAnnotated(r.errors) ? totalErrors(normalizeErrors(r.errors)) : null,
-      hasDieth: !!r.dieth,
-    })),
+    items: page.map(toSavedSample),
+  }
+}
+
+/** A sample record (with its speaker expanded) for the sample lists. */
+export function toSavedSample(r: RecordModel): SavedSample {
+  return {
+    id: r.id,
+    text: r.text,
+    language: r.language,
+    model: r.model,
+    seed: r.seed,
+    duration_s: r.duration_s,
+    note: r.note,
+    created: r.created,
+    speakerName: r.expand?.speaker?.name ?? null,
+    errorTotal: isAnnotated(r.errors) ? totalErrors(normalizeErrors(r.errors)) : null,
+    hasDieth: !!r.dieth,
   }
 }
 
@@ -172,11 +178,14 @@ export async function getAnnotatedSample(id: string): Promise<{ sample: Annotate
   const pb = createPocketBase(await requireToken())
   let r: RecordModel
   try {
-    // access rules only return the user's own samples
     r = await pb.collection("samples").getOne(id, { expand: "speaker" })
   } catch (e) {
     if (e instanceof ClientResponseError && e.status === 404) return null
     throw e
+  }
+  // samples of others in a shared dataset are visible too, but not annotated here
+  if (r.owner !== user.id) {
+    return null
   }
   const neighbour = async (filter: string, sort: string) => {
     const result = await pb.collection("samples").getList(1, 1, {
@@ -223,6 +232,24 @@ export const MAX_EXPORT_IDS = 1000
 /** The samples to export: these ones, or all of the user's samples except these. */
 export type ExportSelection = { ids: string[] } | { allExcept: string[] }
 
+/**
+ * A selection as the Saved page sends it: {"ids": [...]} for these samples, or
+ * {"all": true, "exclude": [...]} for all of them except some (including ones the page hasn't
+ * loaded). Returns a message for the user if it isn't valid.
+ */
+export function parseSelection(body: unknown): ExportSelection | { error: string } {
+  const { all, exclude, ids } = (body ?? {}) as { all?: unknown; exclude?: unknown; ids?: unknown }
+  const list = all === true ? exclude ?? [] : ids
+  const unique = Array.isArray(list) ? [...new Set(list)] : null
+  if (!unique || (all !== true && !unique.length) || !unique.every((id) => typeof id === "string" && isRecordId(id))) {
+    return { error: "Select the samples first." }
+  }
+  if (unique.length > MAX_EXPORT_IDS) {
+    return { error: `Select all samples or at most ${MAX_EXPORT_IDS} single ones.` }
+  }
+  return all === true ? { allExcept: unique as string[] } : { ids: unique as string[] }
+}
+
 const SAMPLE_COLUMNS = [
   "file", "id", "created", "model", "model_name", "language", "language_name", "speaker", "speaker_id",
   "speaker_file", "text", "ref_text", "seed", "duration_s", "checkpoint", "rating", "tags", "note", "dieth",
@@ -249,35 +276,47 @@ function toCsv<C extends string>(columns: readonly C[], rows: Record<C, CsvValue
 }
 
 /**
- * A zip of the selected samples of the user (ids of other or deleted samples are skipped): the audio under audio/, the
- * reference recordings of their speakers under speakers/, and all metadata and notes in
- * metadata.csv/.json and speakers.csv/.json. Audio is streamed from PocketBase one file at a
- * time, so large exports don't have to fit in memory.
- * Returns null if none of the samples exist.
+ * The user's own samples in the selection, newest first, with their speakers (ids of other or
+ * deleted samples are skipped).
  */
-export async function exportSamples(token: string, userId: string, selection: ExportSelection): Promise<ReadableStream<Uint8Array> | null> {
-  const pb = createPocketBase(token)
+export async function selectSamples(pb: PocketBase, userId: string, selection: ExportSelection, fields?: string): Promise<RecordModel[]> {
   const records: RecordModel[] = []
   if ("allExcept" in selection) {
     const excluded = new Set(selection.allExcept)
-    const all = await pb.collection("samples").getFullList({ filter: pb.filter("owner = {:owner}", { owner: userId }), expand: "speaker" })
+    const all = await pb.collection("samples").getFullList({ filter: pb.filter("owner = {:owner}", { owner: userId }), expand: "speaker", fields })
     records.push(...all.filter((r) => !excluded.has(r.id)))
   }
   const ids = "ids" in selection ? selection.ids : []
-  // keeps the filter short; access rules only return the user's own samples anyway
+  // keeps the filter short; samples in shared datasets are visible too, so the owner is checked
   for (let i = 0; i < ids.length; i += 50) {
     const chunk = ids.slice(i, i + 50)
     const idFilter = chunk.map((_, j) => `id = {:id${j}}`).join(" || ")
     records.push(...await pb.collection("samples").getFullList({
       filter: pb.filter(`owner = {:owner} && (${idFilter})`, { owner: userId, ...Object.fromEntries(chunk.map((id, j) => [`id${j}`, id])) }),
       expand: "speaker",
+      fields,
     }))
   }
-  if (!records.length) {
-    return null
-  }
-  records.sort((a, b) => b.created.localeCompare(a.created))
+  return records.sort((a, b) => b.created.localeCompare(a.created))
+}
 
+/**
+ * A zip of the selected samples of the user, or null if none of the samples exist.
+ * See zipSamples for its contents.
+ */
+export async function exportSamples(token: string, userId: string, selection: ExportSelection): Promise<ReadableStream<Uint8Array> | null> {
+  const pb = createPocketBase(token)
+  const records = await selectSamples(pb, userId, selection)
+  return records.length ? zipSamples(pb, token, records) : null
+}
+
+/**
+ * A zip of these sample records (with their speakers expanded): the audio under audio/, the
+ * reference recordings of their speakers under speakers/, and all metadata and notes in
+ * metadata.csv/.json and speakers.csv/.json, plus any extra text files. Audio is streamed from
+ * PocketBase one file at a time, so large exports don't have to fit in memory.
+ */
+export async function zipSamples(pb: PocketBase, token: string, records: RecordModel[], extraFiles: Record<string, string> = {}): Promise<ReadableStream<Uint8Array>> {
   // each speaker once, even if several samples were generated from it
   const speakers = new Map<string, RecordModel>()
   for (const r of records) {
@@ -364,6 +403,9 @@ export async function exportSamples(token: string, userId: string, selection: Ex
         file.push(new Uint8Array(0), true)
       }
       try {
+        for (const [name, text] of Object.entries(extraFiles)) {
+          addText(name, text)
+        }
         addText("metadata.csv", toCsv([...SAMPLE_COLUMNS, ...ERROR_COLUMNS], sampleRows))
         addText("metadata.json", JSON.stringify(sampleRows, null, 2) + "\n")
         if (speakers.size) {

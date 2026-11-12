@@ -1,7 +1,6 @@
 import { tokenUserId } from "@/lib/auth-token"
-import { isRecordId } from "@/lib/files"
 import { verifiedToken } from "@/lib/gateway"
-import { MAX_EXPORT_IDS, type ExportSelection, exportSamples } from "@/lib/samples"
+import { exportSamples, parseSelection } from "@/lib/samples"
 
 // a zip of the signed-in user's samples: body {"ids": ["...", ...]} for these samples, or
 // {"all": true, "exclude": ["...", ...]} for all of them except some (including ones the page hasn't loaded)
@@ -10,17 +9,10 @@ export async function POST(request: Request) {
   if (!token) {
     return Response.json({ detail: "Not signed in" }, { status: 401 })
   }
-  const body = await request.json().catch(() => ({}))
-  const all = body.all === true
-  const list = all ? body.exclude ?? [] : body.ids
-  const ids = Array.isArray(list) ? [...new Set(list)] : null
-  if (!ids || (!all && !ids.length) || !ids.every((id) => typeof id === "string" && isRecordId(id))) {
-    return Response.json({ detail: "Select the samples to export." }, { status: 400 })
+  const selection = parseSelection(await request.json().catch(() => ({})))
+  if ("error" in selection) {
+    return Response.json({ detail: selection.error }, { status: 400 })
   }
-  if (ids.length > MAX_EXPORT_IDS) {
-    return Response.json({ detail: `Select all samples or at most ${MAX_EXPORT_IDS} single ones.` }, { status: 400 })
-  }
-  const selection: ExportSelection = all ? { allExcept: ids as string[] } : { ids: ids as string[] }
 
   let zip
   try {

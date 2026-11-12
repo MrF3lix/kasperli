@@ -9,7 +9,7 @@ export async function GET(request: Request, ctx: RouteContext<"/api/samples/[id]
     return Response.json({ detail: "Not signed in" }, { status: 401 })
   }
   const { id } = await ctx.params
-  // access rules only return the user's own samples
+  // access rules return the user's own samples and the ones in datasets shared with them
   const audio = await protectedFile(createPocketBase(token), "samples", id, "audio")
   if (!audio) {
     return Response.json({ detail: "Not found" }, { status: 404 })

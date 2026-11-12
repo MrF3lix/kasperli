@@ -9,7 +9,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import type { SampleCursor, SavedSample } from "@/lib/samples"
 import { loadMoreSamples } from "./actions"
 import { DeleteSampleButton } from "./delete-sample-button"
-import { SelectAllHead, SelectRowCell, useSampleSelection } from "./export-selection"
+import { SelectAllHead, SelectRowCell, useSampleSelection } from "./sample-selection"
 import { PlayButton } from "./play-button"
 
 type Props = {

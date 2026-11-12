@@ -4,7 +4,7 @@ import { Card } from "@/components/ui/card"
 import { requireToken } from "@/lib/auth"
 import { getModels } from "@/lib/gateway"
 import { listSamples } from "@/lib/samples"
-import { ExportSelectionProvider, ExportToolbar, SampleCount } from "./export-selection"
+import { SampleCount, SelectionProvider, SelectionToolbar } from "./sample-selection"
 import { SampleList } from "./sample-list"
 
 export const metadata: Metadata = {
@@ -13,7 +13,7 @@ export const metadata: Metadata = {
 
 export default function SavedPage() {
   return (
-    <ExportSelectionProvider>
+    <SelectionProvider>
       <div className="grid min-w-0 gap-6">
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div className="grid gap-1">
@@ -21,13 +21,13 @@ export default function SavedPage() {
             <p className="text-sm text-muted-foreground">Samples you kept on the generate page. They stay until you remove them.</p>
             <SampleCount />
           </div>
-          <ExportToolbar />
+          <SelectionToolbar />
         </div>
         <Suspense fallback={<Card className="h-64 animate-pulse" />}>
           <SampleTable />
         </Suspense>
       </div>
-    </ExportSelectionProvider>
+    </SelectionProvider>
   )
 }
 

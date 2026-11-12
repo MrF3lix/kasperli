@@ -19,7 +19,8 @@ await pb.collection("_superusers").authWithPassword(process.env.PB_SUPERUSER_EMA
 const password = randomBytes(18).toString("base64url")
 const data = { email, name, password, passwordConfirm: password }
 if (kind === "user") {
-  Object.assign(data, { role: flags.includes("--admin") ? "admin" : "user", verified: true })
+  // other users find them by email when sharing a dataset
+  Object.assign(data, { role: flags.includes("--admin") ? "admin" : "user", verified: true, emailVisibility: true })
 }
 const record = await pb.collection(kind === "user" ? "users" : "services").create(data)
 
