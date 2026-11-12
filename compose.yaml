@@ -28,6 +28,7 @@ services:
     environment:
       PB_URL: http://pocketbase:8090
       API_URL: ${API_URL:-http://host.docker.internal:8000}
+      STT_API_URL: ${STT_API_URL:-http://host.docker.internal:8020}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     ports:

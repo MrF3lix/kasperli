@@ -1,8 +1,8 @@
 "use client"
 
-import { useCallback, useEffect, useState } from "react"
+import { useCallback, useEffect, useRef, useState } from "react"
 import Link from "next/link"
-import { CheckCircle2Icon, RotateCcwIcon, SaveIcon } from "lucide-react"
+import { CheckCircle2Icon, Loader2Icon, RotateCcwIcon, SaveIcon, SparklesIcon } from "lucide-react"
 import { Recorder } from "@/components/recorder"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
@@ -10,10 +10,21 @@ import { Label } from "@/components/ui/label"
 import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select"
 import { Textarea } from "@/components/ui/textarea"
 import { errorMessage, type Language, MAX_RECORDING_BYTES, MAX_RECORDING_SECONDS, MAX_TRANSCRIPT_CHARS, RECORDING_MODEL_NAME } from "@/lib/tts"
+import { cancelTranscription, startTranscription, waitForTranscription } from "@/lib/transcription-client"
 import { toWav, type WavFile } from "@/lib/wav"
+import { saveTranscript } from "../saved/[id]/actions"
 
 // the dialect chosen last, so a series of recordings needs it only once
 const DIALECT_KEY = "record.dialect"
+
+// the automatic transcription of the current recording
+type AutoTranscript =
+  | { state: "queued"; ahead: number | null }
+  | { state: "running" }
+  | { state: "done"; text: string }
+  | { state: "error"; message: string }
+
+type TranscriptionJob = { id: string | null; finished: boolean; controller: AbortController; result: Promise<string> }
 
 type Props = {
   dialects: Language[]
@@ -30,6 +41,91 @@ export function RecordForm({ dialects, speakerName }: Props) {
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [savedId, setSavedId] = useState<string | null>(null)
+  // after saving a recording whose transcript was still being made: whether it was added since
+  const [savedTranscript, setSavedTranscript] = useState<"pending" | "added" | "failed" | null>(null)
+  const [auto, setAuto] = useState<AutoTranscript | null>(null)
+  const job = useRef<TranscriptionJob | null>(null)
+  // transcriptions of saved recordings that are still being made, stopped when the page is left
+  const background = useRef(new Set<AbortController>())
+  // the typed transcript, for deciding whether the automatic one may fill the field
+  const textRef = useRef(text)
+  // the saved recording the message is about, for transcripts that are added after saving
+  const savedIdRef = useRef(savedId)
+  useEffect(() => {
+    textRef.current = text
+    savedIdRef.current = savedId
+  })
+
+  useEffect(() => {
+    const running = background.current
+    return () => {
+      stopTranscription()
+      running.forEach((c) => c.abort())
+    }
+  }, [])
+
+  /** Transcribes the new recording automatically, replacing a transcription of an earlier one. */
+  function beginTranscription(audio: File) {
+    stopTranscription()
+    const controller = new AbortController()
+    const current: TranscriptionJob = { id: null, finished: false, controller, result: Promise.resolve("") }
+    job.current = current
+    setAuto({ state: "queued", ahead: null })
+    current.result = (async () => {
+      const started = await startTranscription(audio, controller.signal)
+      current.id = started.id
+      return waitForTranscription(started.id, controller.signal, (update) => {
+        if (job.current !== current) return
+        setAuto(update.status === "running" ? { state: "running" } : { state: "queued", ahead: update.queue_position })
+      })
+    })()
+    current.result.finally(() => { current.finished = true }).catch(() => {})
+    current.result.then((transcript) => {
+      if (job.current !== current) return
+      setAuto({ state: "done", text: transcript })
+      // what the user typed meanwhile is kept
+      if (!textRef.current.trim()) setText(transcript)
+    }, (e: unknown) => {
+      if (job.current !== current || controller.signal.aborted) return
+      setAuto({ state: "error", message: e instanceof Error ? e.message : "Automatic transcription failed." })
+    })
+  }
+
+  /** Stops the transcription of the current recording, e.g. when it is discarded. */
+  function stopTranscription() {
+    const current = job.current
+    job.current = null
+    setAuto(null)
+    if (!current) return
+    current.controller.abort()
+    // queued work would take the GPU from others; finished jobs expire by themselves
+    if (current.id && !current.finished) cancelTranscription(current.id)
+  }
+
+  /** A recording was saved before its transcript was ready: add the transcript to it when it is. */
+  function finishInBackground(current: TranscriptionJob, sampleId: string) {
+    job.current = null
+    setAuto(null)
+    background.current.add(current.controller)
+    setSavedTranscript("pending")
+    current.result
+      .then(async (transcript) => {
+        if (!transcript) return "failed" as const
+        const result = await saveTranscript(sampleId, transcript)
+        return "error" in result ? "failed" as const : "added" as const
+      })
+      .catch(() => "failed" as const)
+      .then((outcome) => {
+        background.current.delete(current.controller)
+        if (!current.controller.signal.aborted && savedIdRef.current === sampleId) setSavedTranscript(outcome)
+      })
+  }
+
+  function discard() {
+    stopTranscription()
+    setWav(null)
+    setText("")
+  }
 
   // restore the last dialect after hydrating (storage isn't available on the server)
   useEffect(() => {
@@ -62,6 +158,7 @@ export function RecordForm({ dialects, speakerName }: Props) {
   async function recorded(blob: Blob) {
     setError(null)
     setSavedId(null)
+    setSavedTranscript(null)
     setBusy(true)
     try {
       const result = await toWav(blob, "recording")
@@ -70,6 +167,7 @@ export function RecordForm({ dialects, speakerName }: Props) {
         return
       }
       setWav(result)
+      beginTranscription(result.file)
     } catch (e) {
       console.error(e)
       setError("The recording could not be read. Try again, or in another browser.")
@@ -95,6 +193,14 @@ export function RecordForm({ dialects, speakerName }: Props) {
       }
       const { id } = await response.json()
       setSavedId(id)
+      setSavedTranscript(null)
+      const current = job.current
+      const transcribing = auto?.state === "queued" || auto?.state === "running"
+      if (current && transcribing && !text.trim()) {
+        finishInBackground(current, id)
+      } else {
+        stopTranscription()
+      }
       setWav(null)
       setText("")
     } catch {
@@ -120,7 +226,7 @@ export function RecordForm({ dialects, speakerName }: Props) {
           <div className="grid gap-2">
             <span className="text-sm font-medium">Recording</span>
             {wav ? (
-              <RecordingPreview wav={wav} onDiscard={() => setWav(null)} disabled={saving} />
+              <RecordingPreview wav={wav} onDiscard={discard} disabled={saving} />
             ) : (
               <Recorder
                 maxSeconds={MAX_RECORDING_SECONDS}
@@ -141,9 +247,12 @@ export function RecordForm({ dialects, speakerName }: Props) {
               rows={3}
               maxLength={MAX_TRANSCRIPT_CHARS}
               value={text}
-              placeholder="What you said. You can also add it later on the sample's page."
+              placeholder={auto?.state === "queued" || auto?.state === "running"
+                ? "Transcribing automatically… You can also type it yourself."
+                : "What you said. It is transcribed automatically after recording; you can also add it later on the sample's page."}
               onChange={(e) => setText(e.target.value)}
             />
+            {auto && <AutoTranscriptStatus auto={auto} text={text} onUse={setText} />}
           </div>
 
           <div className="flex flex-wrap items-center gap-3">
@@ -158,12 +267,48 @@ export function RecordForm({ dialects, speakerName }: Props) {
                 <Link href={`/saved/${savedId}`} className="underline underline-offset-4 hover:text-foreground">Open it</Link>
                 or
                 <Link href="/saved" className="underline underline-offset-4 hover:text-foreground">see all saved samples</Link>.
+                {savedTranscript === "pending" && " The transcript is added when it's ready."}
+                {savedTranscript === "added" && " The automatic transcript was added."}
+                {savedTranscript === "failed" && " The automatic transcription failed; add the transcript on the sample's page."}
               </span>
             )}
           </div>
         </form>
       </CardContent>
     </Card>
+  )
+}
+
+function AutoTranscriptStatus({ auto, text, onUse }: { auto: AutoTranscript; text: string; onUse: (text: string) => void }) {
+  const className = "flex flex-wrap items-center gap-1.5 text-sm text-muted-foreground"
+  if (auto.state === "queued" || auto.state === "running") {
+    return (
+      <p className={className} aria-live="polite">
+        <Loader2Icon className="size-4 animate-spin" />
+        {auto.state === "queued" && auto.ahead ? `Waiting to be transcribed (${auto.ahead} ahead)…` : "Transcribing automatically…"}
+      </p>
+    )
+  }
+  if (auto.state === "error") {
+    return <p className="text-sm text-destructive" aria-live="polite">{auto.message}</p>
+  }
+  if (!auto.text) {
+    return <p className={className} aria-live="polite">No speech was recognised.</p>
+  }
+  if (text.trim() === auto.text) {
+    return (
+      <p className={className} aria-live="polite">
+        <SparklesIcon className="size-4" /> Transcribed automatically (Swiss German to Standard German). Check and correct it.
+      </p>
+    )
+  }
+  // the user typed their own transcript before the automatic one was ready
+  return (
+    <div className="grid gap-1.5 rounded-lg border border-dashed p-2.5 text-sm" aria-live="polite">
+      <span className="flex items-center gap-1.5 text-muted-foreground"><SparklesIcon className="size-4" /> Automatic transcript</span>
+      <p>{auto.text}</p>
+      <Button type="button" variant="outline" size="sm" className="w-fit" onClick={() => onUse(auto.text)}>Use this instead</Button>
+    </div>
   )
 }
 
