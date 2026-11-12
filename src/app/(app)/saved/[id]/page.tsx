@@ -10,9 +10,11 @@ import { Label } from "@/components/ui/label"
 import { requireToken } from "@/lib/auth"
 import { getModels } from "@/lib/gateway"
 import { getAnnotatedSample } from "@/lib/samples"
+import { allDialects, RECORDING_MODEL_NAME } from "@/lib/tts"
 import { NoteField } from "../note-field"
 import { DiethField } from "./dieth-field"
 import { ErrorAnnotation } from "./error-annotation"
+import { DialectSelect, TranscriptField } from "./recording-fields"
 
 export const metadata: Metadata = {
   title: "Annotate sample · TTS",
@@ -40,10 +42,22 @@ async function Annotation({ params }: Pick<PageProps<"/saved/[id]">, "params">) 
   const { sample, older, newer } = result
 
   // display names come from the models; ids and codes are shown while the gateway is unreachable
-  const model = "error" in models ? undefined : models.find((m) => m.id === sample.model)
+  const modelList = "error" in models ? [] : models
+  const model = modelList.find((m) => m.id === sample.model)
   const language = model?.languages.find((l) => l.code === sample.language)
+  // the transcript and dialect of recordings can be changed; those of generated samples are their settings
+  const dialects = allDialects(modelList)
+  const recordingDialect = dialects.length
+    ? <DialectSelect key="dialect" id={sample.id} initial={sample.language} dialects={dialects} />
+    : sample.language
 
-  const details: [string, ReactNode][] = [
+  const details: [string, ReactNode][] = sample.isRecording ? [
+    ["Model", RECORDING_MODEL_NAME],
+    ["Dialect", recordingDialect],
+    ["Speaker", sample.speakerName ?? "Unknown speaker"],
+    ["Duration", `${sample.duration_s.toFixed(1)} s`],
+    ["Recorded", <LocalTime key="saved" value={sample.created} />],
+  ] : [
     ["Model", model?.name ?? sample.model],
     ["Dialect", language?.name ?? sample.language],
     ["Speaker", sample.speakerName ?? "Unknown speaker"],
@@ -57,7 +71,7 @@ async function Annotation({ params }: Pick<PageProps<"/saved/[id]">, "params">) 
     // remounted per sample, so the autosaving fields start from the new sample's values
     <div key={sample.id} className="grid gap-6">
       <div className="flex flex-wrap items-center justify-between gap-4">
-        <h1 className="text-xl font-semibold">Annotate sample</h1>
+        <h1 className="text-xl font-semibold">{sample.isRecording ? "Annotate recording" : "Annotate sample"}</h1>
         <nav className="flex items-center gap-2" aria-label="Other samples">
           <NeighbourLink id={newer} label="Newer" icon="previous" />
           <NeighbourLink id={older} label="Older" icon="next" />
@@ -66,7 +80,9 @@ async function Annotation({ params }: Pick<PageProps<"/saved/[id]">, "params">) 
 
       <Card>
         <CardContent className="grid gap-4">
-          <p className="text-base">{sample.text}</p>
+          {sample.isRecording
+            ? <TranscriptField id={sample.id} initial={sample.text} />
+            : <p className="text-base">{sample.text}</p>}
           <audio controls preload="metadata" src={`/api/samples/${sample.id}/audio`} className="w-full" />
           <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-sm sm:grid-cols-[auto_1fr_auto_1fr]">
             {details.map(([term, value]) => (

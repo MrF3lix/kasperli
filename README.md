@@ -24,6 +24,7 @@ The browser only talks to Next.js. The PocketBase token is kept in an httpOnly c
 | `src/lib/gateway.ts` | The forwarding; checks the session against PocketBase (cached for 60 s per token) |
 | `src/lib/speakers.ts`, `src/app/(app)/speakers/` | Saved speakers: listing, saving with deduplication, audio for previews, the Speakers page with renaming |
 | `src/lib/samples.ts`, `src/app/(app)/saved/` | Kept samples: keeping and removing from the job list, the Saved page with notes |
+| `src/app/(app)/record/`, `src/app/api/samples/record/` | Record page: users record themselves (16-bit mono WAV, converted in the browser), choose the dialect and type the transcript; saved as a sample with the model `recording` |
 | `src/lib/datasets.ts`, `src/app/(app)/dataset/` | Datasets: created from selected samples on the Saved page, list, detail with zip download (`/api/dataset/[id]/export`), editing name, access and samples |
 | `src/lib/files.ts` | Streams protected PocketBase files (speaker and sample audio) to the browser |
 | `src/components/generate/` | Generate page: form, speaker upload/recording (converted to 16-bit mono WAV in the browser), job list with live progress |
@@ -37,7 +38,7 @@ The browser only talks to Next.js. The PocketBase token is kept in an httpOnly c
 | `users` | Sign-up disabled; accounts are created by an admin. Extra fields `role` (`user`/`admin`) and `max_samples_per_job`, which users can't change themselves |
 | `services` | Auth collection for the gateway's service account. Not visible to users |
 | `speakers` | Reference recordings. Saved by the app when a job with a new recording is accepted, deduplicated per user by the SHA-256 of the stored WAV. Owners can rename and delete them (deletes their samples) |
-| `samples` | Kept samples. The app copies a finished sample with its settings (text, dialect, model, seed) from the gateway when the user keeps it, linked to one of their own speakers. Owners can only edit `rating`, `tags` and `note` afterwards |
+| `samples` | Kept samples. The app copies a finished sample with its settings (text, dialect, model, seed) from the gateway when the user keeps it, linked to one of their own speakers. Owners can only edit `rating`, `tags`, `note` and the annotations afterwards. Recordings (model `recording`) have no speaker record, seed or job; `speaker_name` holds who recorded them, and owners can also change their transcript (`text`) and dialect |
 | `datasets` | Named sets of samples. The owner and the `users` given access can view and edit them; only the owner can delete them. Samples in a dataset, and their speakers, are visible to everyone with access; users see each other's names and emails to share |
 | `dataset_samples` | One record per sample in a dataset. Users can only add their own samples |
 | `api_keys` | Personal API keys, stored as SHA-256 hashes |

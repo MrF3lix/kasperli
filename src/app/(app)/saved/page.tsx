@@ -1,9 +1,8 @@
 import { Suspense } from "react"
 import type { Metadata } from "next"
 import { Card } from "@/components/ui/card"
-import { requireToken } from "@/lib/auth"
-import { getModels } from "@/lib/gateway"
 import { listSamples } from "@/lib/samples"
+import { modelDisplayNames } from "@/lib/model-names"
 import { SampleCount, SelectionProvider, SelectionToolbar } from "./sample-selection"
 import { SampleList } from "./sample-list"
 
@@ -18,7 +17,7 @@ export default function SavedPage() {
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div className="grid gap-1">
             <h1 className="text-xl font-semibold">Saved samples</h1>
-            <p className="text-sm text-muted-foreground">Samples you kept on the generate page. They stay until you remove them.</p>
+            <p className="text-sm text-muted-foreground">Samples you kept on the generate page or recorded. They stay until you remove them.</p>
             <SampleCount />
           </div>
           <SelectionToolbar />
@@ -32,20 +31,6 @@ export default function SavedPage() {
 }
 
 async function SampleTable() {
-  const [{ items, total, next }, models] = await Promise.all([listSamples(), getModels(await requireToken())])
-
-  // model and dialect names come from the models; ids and codes are shown while the gateway is unreachable
-  const modelList = "error" in models ? [] : models
-  const modelNames = Object.fromEntries(modelList.map((m) => [m.id, m.name]))
-  const languageNames = Object.fromEntries(modelList.flatMap((m) => m.languages.map((l) => [`${m.id}/${l.code}`, l.name])))
-
-  return (
-    <SampleList
-      initialItems={items}
-      initialNext={next}
-      initialTotal={total ?? items.length}
-      modelNames={modelNames}
-      languageNames={languageNames}
-    />
-  )
+  const [{ items, total, next }, names] = await Promise.all([listSamples(), modelDisplayNames()])
+  return <SampleList initialItems={items} initialNext={next} initialTotal={total ?? items.length} {...names} />
 }

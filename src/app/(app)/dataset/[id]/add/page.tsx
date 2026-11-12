@@ -8,7 +8,7 @@ import { getDataset } from "@/lib/datasets"
 import { listSamples } from "@/lib/samples"
 import { SampleList } from "../../../saved/sample-list"
 import { SelectionProvider, SelectionToolbar } from "../../../saved/sample-selection"
-import { modelDisplayNames } from "../../model-names"
+import { modelDisplayNames } from "@/lib/model-names"
 
 export const metadata: Metadata = {
   title: "Add samples · TTS",

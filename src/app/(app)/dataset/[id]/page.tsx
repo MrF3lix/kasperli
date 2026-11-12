@@ -9,7 +9,7 @@ import { Card, CardContent } from "@/components/ui/card"
 import { getCurrentUser } from "@/lib/auth"
 import { getDataset } from "@/lib/datasets"
 import { DatasetSampleTable } from "../dataset-sample-table"
-import { modelDisplayNames } from "../model-names"
+import { modelDisplayNames } from "@/lib/model-names"
 import { UserList } from "../user-list"
 
 export const metadata: Metadata = {

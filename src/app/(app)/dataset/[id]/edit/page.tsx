@@ -6,7 +6,7 @@ import { ArrowLeftIcon } from "lucide-react"
 import { Card } from "@/components/ui/card"
 import { getCurrentUser } from "@/lib/auth"
 import { getDataset, listUsers } from "@/lib/datasets"
-import { modelDisplayNames } from "../../model-names"
+import { modelDisplayNames } from "@/lib/model-names"
 import { EditDataset } from "./edit-dataset"
 
 export const metadata: Metadata = {

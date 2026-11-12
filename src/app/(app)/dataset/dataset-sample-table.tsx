@@ -2,6 +2,7 @@
 
 import Link from "next/link"
 import { LocalTime } from "@/components/local-time"
+import { SampleText } from "@/components/sample-text"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import type { DatasetSample } from "@/lib/datasets"
 import { PlayButton } from "../saved/play-button"
@@ -46,7 +47,7 @@ export function DatasetSampleTable({ samples, currentUserId, modelNames, languag
               </TableHead>
             )}
             <TableHead>Sample</TableHead>
-            <TableHead className="hidden md:table-cell">Generated with</TableHead>
+            <TableHead className="hidden md:table-cell">Model</TableHead>
             <TableHead>Annotation</TableHead>
             <TableHead className="hidden sm:table-cell">Saved by</TableHead>
             <TableHead className="hidden md:table-cell">Saved</TableHead>
@@ -78,17 +79,17 @@ export function DatasetSampleTable({ samples, currentUserId, modelNames, languag
                     <PlayButton id={sample.id} />
                     {own ? (
                       <Link href={`/saved/${sample.id}`} title={sample.text} className="line-clamp-2 hover:underline hover:underline-offset-4">
-                        {sample.text}
+                        <SampleText text={sample.text} />
                       </Link>
                     ) : (
-                      <span title={sample.text} className="line-clamp-2">{sample.text}</span>
+                      <span title={sample.text} className="line-clamp-2"><SampleText text={sample.text} /></span>
                     )}
                   </div>
                 </TableCell>
                 <TableCell className="hidden pt-3 align-top whitespace-normal md:table-cell">
                   <p className="font-medium">{modelNames[sample.model] ?? sample.model}</p>
                   <p>{languageNames[`${sample.model}/${sample.language}`] ?? sample.language}</p>
-                  <p className="text-xs text-muted-foreground">{sample.speakerName ?? "Unknown speaker"} · seed {sample.seed}</p>
+                  <p className="text-xs text-muted-foreground">{sample.speakerName ?? "Unknown speaker"}{sample.seed !== null && ` · seed ${sample.seed}`}</p>
                 </TableCell>
                 <TableCell className="pt-3 align-top">
                   <div className="grid">

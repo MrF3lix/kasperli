@@ -7,18 +7,22 @@ import { getCurrentUser, requireToken } from "@/lib/auth"
 import { isRecordId } from "@/lib/files"
 import { fetchGateway, getModels } from "@/lib/gateway"
 import { createPocketBase } from "@/lib/pocketbase"
-import type { Job } from "@/lib/tts"
+import { displayNames, type Job, MAX_TRANSCRIPT_CHARS, RECORDING_MODEL } from "@/lib/tts"
+import { wavDuration } from "@/lib/wav-info"
 
 export type SavedSample = {
   id: string
   text: string
   language: string
   model: string
-  seed: number
+  // null for recordings
+  seed: number | null
   duration_s: number
   note: string
   created: string
+  // the saved speaker, or who recorded it
   speakerName: string | null
+  isRecording: boolean
   // total of the annotated deviations, null if not annotated
   errorTotal: number | null
   hasDieth: boolean
@@ -108,6 +112,43 @@ export async function keptIndices(token: string, userId: string, jobId: string):
   return records.map((r) => r.sample_index)
 }
 
+/**
+ * Saves a recording of the signed-in user (a 16-bit mono WAV, as the Record page converts it) as
+ * a sample in this dialect, with the user's name as the speaker. The transcript can be empty and
+ * added later. Returns the new sample's id.
+ */
+export async function saveRecording(audio: File, language: string, text: string): Promise<string> {
+  const user = await getCurrentUser()
+  const pb = createPocketBase(await requireToken())
+  const duration = wavDuration(await audio.arrayBuffer())
+  if (duration === null) {
+    throw new KeepError("The recording is not a WAV file.", 400)
+  }
+  const transcript = text.trim()
+  if (transcript.length > MAX_TRANSCRIPT_CHARS) {
+    throw new KeepError(`The transcript can be at most ${MAX_TRANSCRIPT_CHARS} characters long.`, 400)
+  }
+  const date = new Date().toISOString().replace(/[:.]/g, "-")
+  try {
+    const record = await pb.collection("samples").create({
+      owner: user.id,
+      speaker_name: user.name,
+      audio: new File([audio], `recording-${date}.wav`, { type: "audio/wav" }),
+      text: transcript,
+      language,
+      model: RECORDING_MODEL,
+      duration_s: Math.round(duration * 100) / 100,
+    }, { fields: "id" })
+    return record.id
+  } catch (e) {
+    if (e instanceof ClientResponseError && e.status === 400) {
+      console.error("saving a recording was rejected", e.response)
+      throw new KeepError("The recording could not be saved. It may be too long.", 400)
+    }
+    throw e
+  }
+}
+
 /** Where the next page of saved samples starts: after this sample (newest first). */
 export type SampleCursor = { created: string; id: string }
 
@@ -126,7 +167,7 @@ export async function listSamples(cursor?: SampleCursor): Promise<{ items: Saved
   const result = await pb.collection("samples").getList(1, PAGE_SIZE + 1, {
     filter,
     sort: "-created,-id",
-    fields: "id,text,language,model,seed,duration_s,note,errors,dieth,created,expand.speaker.name",
+    fields: "id,text,language,model,seed,duration_s,note,errors,dieth,created,speaker_name,expand.speaker.name",
     expand: "speaker",
     skipTotal: !!cursor,
   })
@@ -141,16 +182,18 @@ export async function listSamples(cursor?: SampleCursor): Promise<{ items: Saved
 
 /** A sample record (with its speaker expanded) for the sample lists. */
 export function toSavedSample(r: RecordModel): SavedSample {
+  const isRecording = r.model === RECORDING_MODEL
   return {
     id: r.id,
     text: r.text,
     language: r.language,
     model: r.model,
-    seed: r.seed,
+    seed: isRecording ? null : r.seed,
     duration_s: r.duration_s,
     note: r.note,
     created: r.created,
-    speakerName: r.expand?.speaker?.name ?? null,
+    speakerName: r.expand?.speaker?.name || r.speaker_name || null,
+    isRecording,
     errorTotal: isAnnotated(r.errors) ? totalErrors(normalizeErrors(r.errors)) : null,
     hasDieth: !!r.dieth,
   }
@@ -204,21 +247,11 @@ export async function getAnnotatedSample(id: string): Promise<{ sample: Annotate
     older,
     newer,
     sample: {
-      id: r.id,
-      text: r.text,
+      ...toSavedSample(r),
       ref_text: r.ref_text,
-      language: r.language,
-      model: r.model,
       checkpoint: r.checkpoint,
-      seed: r.seed,
-      duration_s: r.duration_s,
-      note: r.note,
-      created: r.created,
       job_id: r.job_id,
       sample_index: r.sample_index,
-      speakerName: r.expand?.speaker?.name ?? null,
-      errorTotal: isAnnotated(r.errors) ? totalErrors(normalizeErrors(r.errors)) : null,
-      hasDieth: !!r.dieth,
       errors: normalizeErrors(r.errors),
       annotated: isAnnotated(r.errors),
       dieth: r.dieth ?? "",
@@ -327,12 +360,11 @@ export async function zipSamples(pb: PocketBase, token: string, records: RecordM
 
   // model and dialect names, if the gateway is reachable
   const models = await getModels(token)
-  const modelList = "error" in models ? [] : models
-  const modelNames = new Map(modelList.map((m) => [m.id, m.name] as const))
-  const languageNames = new Map(modelList.flatMap((m) => m.languages.map((l) => [`${m.id}/${l.code}`, l.name] as const)))
+  const { modelNames, languageNames } = displayNames("error" in models ? [] : models)
 
   const sampleRows: SampleRow[] = records.map((r) => {
     const speaker: RecordModel | undefined = r.expand?.speaker
+    const isRecording = r.model === RECORDING_MODEL
     const annotated = isAnnotated(r.errors)
     const errors = normalizeErrors(r.errors)
     return {
@@ -340,15 +372,15 @@ export async function zipSamples(pb: PocketBase, token: string, records: RecordM
       id: r.id,
       created: r.created,
       model: r.model,
-      model_name: modelNames.get(r.model) ?? null,
+      model_name: modelNames[r.model] ?? null,
       language: r.language,
-      language_name: languageNames.get(`${r.model}/${r.language}`) ?? null,
-      speaker: speaker?.name ?? null,
+      language_name: languageNames[`${r.model}/${r.language}`] ?? null,
+      speaker: speaker?.name || r.speaker_name || null,
       speaker_id: speaker?.id ?? null,
       speaker_file: speaker ? speakerFile(speaker) : null,
       text: r.text,
       ref_text: r.ref_text || null,
-      seed: r.seed,
+      seed: isRecording ? null : r.seed,
       duration_s: r.duration_s,
       checkpoint: r.checkpoint || null,
       rating: r.rating || null,
@@ -356,8 +388,8 @@ export async function zipSamples(pb: PocketBase, token: string, records: RecordM
       note: r.note || null,
       dieth: r.dieth || null,
       errors_total: annotated ? totalErrors(errors) : null,
-      job_id: r.job_id,
-      sample_index: r.sample_index,
+      job_id: r.job_id || null,
+      sample_index: isRecording ? null : r.sample_index,
       ...Object.fromEntries(ERROR_KEYS.map((key) => [`errors_${key}`, annotated ? errors[key] : null])),
     }
   })

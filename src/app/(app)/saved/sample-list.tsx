@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react"
 import Link from "next/link"
 import { PencilIcon } from "lucide-react"
 import { LocalTime } from "@/components/local-time"
+import { SampleText } from "@/components/sample-text"
 import { Button, buttonVariants } from "@/components/ui/button"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import type { SampleCursor, SavedSample } from "@/lib/samples"
@@ -88,7 +89,8 @@ export function SampleList({ initialItems, initialNext, initialTotal, modelNames
     return (
       <p className="text-sm text-muted-foreground">
         Nothing saved yet. Use <span className="font-medium">Save</span> on a finished variant on
-        the <Link href="/" className="underline underline-offset-4">generate page</Link>.
+        the <Link href="/" className="underline underline-offset-4">generate page</Link>, or{" "}
+        <Link href="/record" className="underline underline-offset-4">record a sample</Link>.
       </p>
     )
   }
@@ -101,7 +103,7 @@ export function SampleList({ initialItems, initialNext, initialTotal, modelNames
             <TableRow>
               <SelectAllHead />
               <TableHead>Sample</TableHead>
-              <TableHead className="hidden md:table-cell">Generated with</TableHead>
+              <TableHead className="hidden md:table-cell">Model</TableHead>
               <TableHead>Annotation</TableHead>
               <TableHead className="hidden sm:table-cell">Notes</TableHead>
               <TableHead className="hidden md:table-cell">Saved</TableHead>
@@ -120,14 +122,14 @@ export function SampleList({ initialItems, initialNext, initialTotal, modelNames
                       title={sample.text}
                       className="line-clamp-2 hover:underline hover:underline-offset-4"
                     >
-                      {sample.text}
+                      <SampleText text={sample.text} />
                     </Link>
                   </div>
                 </TableCell>
                 <TableCell className="hidden pt-3 align-top whitespace-normal md:table-cell">
                   <p className="font-medium">{modelNames[sample.model] ?? sample.model}</p>
                   <p>{languageNames[`${sample.model}/${sample.language}`] ?? sample.language}</p>
-                  <p className="text-xs text-muted-foreground">{sample.speakerName ?? "Unknown speaker"} · seed {sample.seed}</p>
+                  <p className="text-xs text-muted-foreground">{sample.speakerName ?? "Unknown speaker"}{sample.seed !== null && ` · seed ${sample.seed}`}</p>
                 </TableCell>
                 <TableCell className="pt-3 align-top">
                   <Link href={`/saved/${sample.id}`} className="grid hover:underline hover:underline-offset-4">

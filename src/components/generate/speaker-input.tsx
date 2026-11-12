@@ -1,7 +1,8 @@
 "use client"
 
-import { useCallback, useEffect, useRef, useState } from "react"
-import { MicIcon, SquareIcon, XIcon } from "lucide-react"
+import { useCallback, useState } from "react"
+import { XIcon } from "lucide-react"
+import { Recorder } from "@/components/recorder"
 import { Button } from "@/components/ui/button"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { cn } from "@/lib/utils"
@@ -100,7 +101,7 @@ export function SpeakerInput({ value, onChange }: Props) {
           </label>
         </TabsContent>
         <TabsContent value="record">
-          <Recorder busy={busy} onRecorded={(blob) => accept(blob, `Recording ${new Date().toLocaleString()}`)} onError={setError} />
+          <Recorder maxSeconds={MAX_SPEAKER_SECONDS} busy={busy} onRecorded={(blob) => accept(blob, `Recording ${new Date().toLocaleString()}`)} onError={setError} />
         </TabsContent>
       </Tabs>
       <p className="text-sm text-muted-foreground">5–15 seconds of clean speech without background noise work best.</p>
@@ -130,78 +131,6 @@ function SelectedSpeaker({ value, onClear }: { value: WavFile; onClear: () => vo
         </div>
       </div>
       <audio controls ref={attach} className="w-full" />
-    </div>
-  )
-}
-
-function Recorder({ busy, onRecorded, onError }: {
-  busy: boolean
-  onRecorded: (blob: Blob) => void
-  onError: (message: string) => void
-}) {
-  const [seconds, setSeconds] = useState<number | null>(null)
-  const recorder = useRef<MediaRecorder | null>(null)
-
-  // stop the microphone when the component goes away mid-recording
-  useEffect(() => () => recorder.current?.stop(), [])
-
-  useEffect(() => {
-    if (seconds === null) return
-    if (seconds >= MAX_SPEAKER_SECONDS) {
-      recorder.current?.stop()
-      return
-    }
-    const timer = setTimeout(() => setSeconds(seconds + 1), 1000)
-    return () => clearTimeout(timer)
-  }, [seconds])
-
-  async function start() {
-    if (!navigator.mediaDevices?.getUserMedia) {
-      onError("Recording needs a secure connection (HTTPS) and a browser with microphone access.")
-      return
-    }
-    let stream: MediaStream
-    try {
-      // unprocessed audio: noise suppression and gain control change the voice being cloned
-      stream = await navigator.mediaDevices.getUserMedia({
-        audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false },
-      })
-    } catch {
-      onError("No access to the microphone. Allow it in the browser and try again.")
-      return
-    }
-    const chunks: Blob[] = []
-    const mediaRecorder = new MediaRecorder(stream)
-    mediaRecorder.ondataavailable = (e) => chunks.push(e.data)
-    mediaRecorder.onstop = () => {
-      stream.getTracks().forEach((t) => t.stop())
-      recorder.current = null
-      setSeconds(null)
-      if (chunks.length) onRecorded(new Blob(chunks, { type: mediaRecorder.mimeType }))
-    }
-    mediaRecorder.start()
-    recorder.current = mediaRecorder
-    setSeconds(0)
-  }
-
-  const recording = seconds !== null
-  return (
-    <div className="flex flex-col items-center gap-2 rounded-lg border border-dashed p-6 text-sm">
-      {recording ? (
-        <>
-          <span className="flex items-center gap-2 font-medium">
-            <span className="size-2 animate-pulse rounded-full bg-destructive" />
-            Recording {seconds} s / {MAX_SPEAKER_SECONDS} s
-          </span>
-          <Button type="button" variant="outline" onClick={() => recorder.current?.stop()}>
-            <SquareIcon /> Stop
-          </Button>
-        </>
-      ) : (
-        <Button type="button" variant="outline" disabled={busy} onClick={start}>
-          <MicIcon /> {busy ? "Processing…" : "Start recording"}
-        </Button>
-      )}
     </div>
   )
 }

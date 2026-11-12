@@ -35,8 +35,11 @@ export function DeleteSampleButton({ id, text, onDeleted }: { id: string; text: 
         <AlertDialogHeader>
           <AlertDialogTitle>Delete this sample?</AlertDialogTitle>
           <AlertDialogDescription>
-            This sample<br />
-            <i>“{text.length > 120 ? `${text.slice(0, 50).trimEnd()}…` : text}”</i><br /> and its notes are deleted permanently.
+            {text ? (
+              <>This sample<br /><i>“{text.length > 120 ? `${text.slice(0, 50).trimEnd()}…` : text}”</i><br /> and its notes are deleted permanently.</>
+            ) : (
+              "This recording and its notes are deleted permanently."
+            )}
           </AlertDialogDescription>
         </AlertDialogHeader>
         {error && <p className="text-sm text-destructive">{error}</p>}
