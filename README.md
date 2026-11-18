@@ -1,4 +1,4 @@
-# TTS UI
+# Kasperli
 
 Web UI for the [TTS API](../tts-api): a Next.js app (App Router, Tailwind, shadcn/ui) with PocketBase for accounts and kept samples.
 The design is described in `tts-api/docs/auth-and-frontend.md`.
