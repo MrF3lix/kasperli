@@ -59,6 +59,12 @@ export const ERROR_GROUPS: ErrorGroup[] = [
     color: "#e5e5e5",
     items: [{ key: "distorted_voice", label: "Anzahl Wortformen" }],
   },
+  {
+    id: "intonation",
+    label: "Auffällige Intonation in der Aufnahme",
+    color: "#fce4d6",
+    items: [{ key: "intonation", label: "Anzahl Auffälligkeiten" }],
+  },
 ]
 
 export const ERROR_KEYS = ERROR_GROUPS.flatMap((g) => g.items.map((i) => i.key))
