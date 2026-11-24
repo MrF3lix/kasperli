@@ -12,10 +12,22 @@ import { toWav, type WavFile } from "@/lib/wav"
 type Props = {
   value: WavFile | null
   onChange: (value: WavFile | null) => void
+  // longest recording accepted
+  maxSeconds?: number
+  // shown under the upload and recording tabs
+  hint?: string
+  // what the recording is, for the remove button's label
+  noun?: string
 }
 
-/** The reference recording of the voice to clone: an uploaded file or a microphone recording. */
-export function SpeakerInput({ value, onChange }: Props) {
+/**
+ * The reference recording of the voice to clone: an uploaded file or a microphone recording.
+ * Also used for other recordings, such as the one to anonymize.
+ */
+export function SpeakerInput({
+  value, onChange, maxSeconds = MAX_SPEAKER_SECONDS, hint = "5–15 seconds of clean speech without background noise work best.",
+  noun = "reference",
+}: Props) {
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
 
@@ -24,8 +36,8 @@ export function SpeakerInput({ value, onChange }: Props) {
     setBusy(true)
     try {
       const wav = await toWav(blob, name)
-      if (wav.duration > MAX_SPEAKER_SECONDS) {
-        setError(`The reference is ${Math.round(wav.duration)} s long; at most ${MAX_SPEAKER_SECONDS} s are allowed. Trim it first.`)
+      if (wav.duration > maxSeconds) {
+        setError(`The ${noun} is ${Math.round(wav.duration)} s long; at most ${maxSeconds} s are allowed. Trim it first.`)
         return
       }
       onChange(wav)
@@ -66,7 +78,7 @@ export function SpeakerInput({ value, onChange }: Props) {
   if (value) {
     return (
       <div {...dropZone} className={dragging ? "rounded-lg ring-2 ring-ring" : undefined}>
-        <SelectedSpeaker value={value} onClear={() => onChange(null)} />
+        <SelectedSpeaker value={value} noun={noun} onClear={() => onChange(null)} />
       </div>
     )
   }
@@ -86,7 +98,7 @@ export function SpeakerInput({ value, onChange }: Props) {
             <span className="font-medium">
               {busy ? "Reading…" : dragging ? "Drop to use this file" : "Drop an audio file here or click to choose one"}
             </span>
-            <span className="text-muted-foreground">WAV, MP3, M4A, … up to {MAX_SPEAKER_SECONDS} s</span>
+            <span className="text-muted-foreground">WAV, MP3, M4A, … up to {maxSeconds} s</span>
             <input
               type="file"
               accept="audio/*"
@@ -101,16 +113,16 @@ export function SpeakerInput({ value, onChange }: Props) {
           </label>
         </TabsContent>
         <TabsContent value="record">
-          <Recorder maxSeconds={MAX_SPEAKER_SECONDS} busy={busy} onRecorded={(blob) => accept(blob, `Recording ${new Date().toLocaleString()}`)} onError={setError} />
+          <Recorder maxSeconds={maxSeconds} busy={busy} onRecorded={(blob) => accept(blob, `Recording ${new Date().toLocaleString()}`)} onError={setError} />
         </TabsContent>
       </Tabs>
-      <p className="text-sm text-muted-foreground">5–15 seconds of clean speech without background noise work best.</p>
+      {hint && <p className="text-sm text-muted-foreground">{hint}</p>}
       {error && <p className="text-sm text-destructive">{error}</p>}
     </div>
   )
 }
 
-function SelectedSpeaker({ value, onClear }: { value: WavFile; onClear: () => void }) {
+function SelectedSpeaker({ value, noun, onClear }: { value: WavFile; noun: string; onClear: () => void }) {
   // object URL for the preview player, released when the player goes away or the file changes
   const attach = useCallback((audio: HTMLAudioElement | null) => {
     if (!audio) return
@@ -125,7 +137,7 @@ function SelectedSpeaker({ value, onClear }: { value: WavFile; onClear: () => vo
         <span className="truncate font-medium">{value.file.name}</span>
         <div className="flex shrink-0 items-center gap-2">
           <span className="text-muted-foreground">{value.duration.toFixed(1)} s</span>
-          <Button type="button" variant="ghost" size="icon-sm" onClick={onClear} aria-label="Remove reference">
+          <Button type="button" variant="ghost" size="icon-sm" onClick={onClear} aria-label={`Remove ${noun}`}>
             <XIcon />
           </Button>
         </div>

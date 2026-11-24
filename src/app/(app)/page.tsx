@@ -5,7 +5,7 @@ import { Card } from "@/components/ui/card"
 import { GenerateView } from "@/components/generate/generate-view"
 import { getCurrentUser, requireToken } from "@/lib/auth"
 import { getModels } from "@/lib/gateway"
-import { listSpeakers } from "@/lib/speakers"
+import { listSpeakersForForm } from "@/lib/speakers"
 
 export const metadata: Metadata = {
   title: "Generate · TTS",
@@ -24,7 +24,7 @@ export default function GeneratePage() {
 
 async function Generate() {
   const user = await getCurrentUser()
-  const [models, speakers] = await Promise.all([getModels(await requireToken()), listSpeakers()])
+  const [models, { speakers, error: speakersError }] = await Promise.all([getModels(await requireToken()), listSpeakersForForm()])
 
   if ("error" in models) {
     return (
@@ -42,5 +42,14 @@ async function Generate() {
       </Alert>
     )
   }
-  return <GenerateView models={models} speakers={speakers} userId={user.id} />
+  return (
+    <>
+      {speakersError && (
+        <Alert>
+          <AlertDescription>{speakersError}</AlertDescription>
+        </Alert>
+      )}
+      <GenerateView models={models} speakers={speakers} userId={user.id} />
+    </>
+  )
 }

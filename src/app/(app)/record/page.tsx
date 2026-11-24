@@ -4,6 +4,7 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Card } from "@/components/ui/card"
 import { getCurrentUser, requireToken } from "@/lib/auth"
 import { getModels } from "@/lib/gateway"
+import { getSttModels } from "@/lib/stt"
 import { allDialects } from "@/lib/tts"
 import { RecordForm } from "./record-form"
 
@@ -29,7 +30,7 @@ export default function RecordPage() {
 }
 
 async function Record() {
-  const [user, models] = await Promise.all([getCurrentUser(), getModels(await requireToken())])
+  const [user, models, sttModels] = await Promise.all([getCurrentUser(), getModels(await requireToken()), getSttModels()])
   // the dialects are those of the models
   const dialects = "error" in models ? [] : allDialects(models)
   if (!dialects.length) {
@@ -42,5 +43,5 @@ async function Record() {
       </Alert>
     )
   }
-  return <RecordForm dialects={dialects} speakerName={user.name} />
+  return <RecordForm dialects={dialects} speakerName={user.name} sttModels={sttModels ?? []} />
 }

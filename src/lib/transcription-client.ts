@@ -1,7 +1,7 @@
 // Automatic transcription of recordings from the browser, through /api/transcriptions (which
 // forwards to the STT gateway). Shared by client components.
 
-import { errorMessage } from "@/lib/tts"
+import { errorMessage, type Language } from "@/lib/tts"
 
 export type TranscriptionState = {
   id: string
@@ -14,10 +14,18 @@ export type TranscriptionState = {
 
 const POLL_MS = 2000
 
+// a model of the STT gateway (GET /models); without a default language it detects the language
+export type SttModel = { id: string; name: string; languages: Language[]; default_language: string | null; workers: number }
+
+// which model and language to transcribe with; omitted: Swiss German to Standard German
+export type TranscriptionOptions = { model?: string; language?: string | null }
+
 /** Starts transcribing a recording; throws with a message for the user if it can't. */
-export async function startTranscription(audio: File, signal?: AbortSignal): Promise<TranscriptionState> {
+export async function startTranscription(audio: File, signal?: AbortSignal, options: TranscriptionOptions = {}): Promise<TranscriptionState> {
   const body = new FormData()
   body.append("audio", audio)
+  if (options.model) body.append("model", options.model)
+  if (options.language) body.append("language", options.language)
   const response = await fetch("/api/transcriptions", { method: "POST", body, signal })
   if (!response.ok) throw new Error(await errorMessage(response))
   return response.json()

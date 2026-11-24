@@ -2,7 +2,8 @@
 
 import { useCallback, useEffect, useRef, useState } from "react"
 import Link from "next/link"
-import { CheckCircle2Icon, Loader2Icon, RotateCcwIcon, SaveIcon, SparklesIcon } from "lucide-react"
+import { CheckCircle2Icon, RotateCcwIcon, SaveIcon } from "lucide-react"
+import { AutoTranscriptStatus, type AutoTranscript } from "@/components/auto-transcript"
 import { Recorder } from "@/components/recorder"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
@@ -10,19 +11,16 @@ import { Label } from "@/components/ui/label"
 import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select"
 import { Textarea } from "@/components/ui/textarea"
 import { errorMessage, type Language, MAX_RECORDING_BYTES, MAX_RECORDING_SECONDS, MAX_TRANSCRIPT_CHARS, RECORDING_MODEL_NAME } from "@/lib/tts"
-import { cancelTranscription, startTranscription, waitForTranscription } from "@/lib/transcription-client"
+import { cancelTranscription, startTranscription, waitForTranscription, type SttModel, type TranscriptionOptions } from "@/lib/transcription-client"
 import { toWav, type WavFile } from "@/lib/wav"
 import { saveTranscript } from "../saved/[id]/actions"
 
 // the dialect chosen last, so a series of recordings needs it only once
 const DIALECT_KEY = "record.dialect"
-
-// the automatic transcription of the current recording
-type AutoTranscript =
-  | { state: "queued"; ahead: number | null }
-  | { state: "running" }
-  | { state: "done"; text: string }
-  | { state: "error"; message: string }
+// the transcription model and language chosen last, as {"model": "...", "language": "..."}
+const TRANSCRIPTION_KEY = "record.transcription"
+// preselected while it exists: Swiss German speech to Standard German text
+const DEFAULT_STT_MODEL = "whisper-swiss-german"
 
 type TranscriptionJob = { id: string | null; finished: boolean; controller: AbortController; result: Promise<string> }
 
@@ -30,11 +28,21 @@ type Props = {
   dialects: Language[]
   // the signed-in user, who is the speaker
   speakerName: string
+  // the transcription models to choose from; empty if they can't be loaded (the default is used)
+  sttModels: SttModel[]
+}
+
+function defaultSttModel(models: SttModel[]): SttModel | undefined {
+  return models.find((m) => m.id === DEFAULT_STT_MODEL) ?? models.find((m) => m.workers > 0) ?? models[0]
 }
 
 /** Recording, then dialect and transcript, then saving as a sample; repeats for the next one. */
-export function RecordForm({ dialects, speakerName }: Props) {
+export function RecordForm({ dialects, speakerName, sttModels }: Props) {
   const [language, setLanguage] = useState(dialects[0].code)
+  // "" for the model's default language, or detecting it when it has none
+  const [sttModelId, setSttModelId] = useState(defaultSttModel(sttModels)?.id ?? "")
+  const sttModel = sttModels.find((m) => m.id === sttModelId)
+  const [sttLanguage, setSttLanguage] = useState("")
   const [wav, setWav] = useState<WavFile | null>(null)
   const [text, setText] = useState("")
   const [busy, setBusy] = useState(false)
@@ -65,14 +73,14 @@ export function RecordForm({ dialects, speakerName }: Props) {
   }, [])
 
   /** Transcribes the new recording automatically, replacing a transcription of an earlier one. */
-  function beginTranscription(audio: File) {
+  function beginTranscription(audio: File, options: TranscriptionOptions = { model: sttModelId || undefined, language: sttLanguage || null }) {
     stopTranscription()
     const controller = new AbortController()
     const current: TranscriptionJob = { id: null, finished: false, controller, result: Promise.resolve("") }
     job.current = current
     setAuto({ state: "queued", ahead: null })
     current.result = (async () => {
-      const started = await startTranscription(audio, controller.signal)
+      const started = await startTranscription(audio, controller.signal, options)
       current.id = started.id
       return waitForTranscription(started.id, controller.signal, (update) => {
         if (job.current !== current) return
@@ -137,6 +145,36 @@ export function RecordForm({ dialects, speakerName }: Props) {
       // storage blocked: start with the first dialect
     }
   }, [dialects])
+
+  // restore the last transcription model and language, if they are still offered
+  useEffect(() => {
+    try {
+      const stored = JSON.parse(localStorage.getItem(TRANSCRIPTION_KEY) ?? "null")
+      const model = sttModels.find((m) => m.id === stored?.model)
+      if (!model) return
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- read once after hydration
+      setSttModelId(model.id)
+      if (model.languages.some((l) => l.code === stored.language)) setSttLanguage(stored.language)
+    } catch {
+      // storage blocked or invalid: the defaults
+    }
+  }, [sttModels])
+
+  /** A new model or language: remembered, and the current recording is transcribed again. */
+  function chooseTranscription(model: string, transcriptionLanguage: string) {
+    setSttModelId(model)
+    setSttLanguage(transcriptionLanguage)
+    try {
+      localStorage.setItem(TRANSCRIPTION_KEY, JSON.stringify({ model, language: transcriptionLanguage }))
+    } catch {
+      // not remembered
+    }
+    if (wav) {
+      // a transcript filled in automatically came from the previous choice
+      if (auto?.state === "done" && text === auto.text) setText("")
+      beginTranscription(wav.file, { model: model || undefined, language: transcriptionLanguage || null })
+    }
+  }
 
   function chooseLanguage(code: string) {
     setLanguage(code)
@@ -214,14 +252,42 @@ export function RecordForm({ dialects, speakerName }: Props) {
     <Card>
       <CardContent>
         <form onSubmit={save} className="grid gap-5">
-          <div className="grid gap-2">
-            <Label htmlFor="dialect">Dialect / Language</Label>
-            <NativeSelect id="dialect" className="w-full" value={language} onChange={(e) => chooseLanguage(e.target.value)}>
-              {dialects.map((d) => (
-                <NativeSelectOption key={d.code} value={d.code}>{d.name}</NativeSelectOption>
-              ))}
-            </NativeSelect>
-          </div>
+          {sttModels.length > 0 && (
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div className="grid gap-2">
+                <Label htmlFor="stt_model">Model</Label>
+                <NativeSelect id="stt_model" className="w-full" value={sttModelId}
+                              onChange={(e) => {
+                                const next = sttModels.find((m) => m.id === e.target.value)
+                                // keep the language if the new model has it too
+                                chooseTranscription(e.target.value, next?.languages.some((l) => l.code === sttLanguage) ? sttLanguage : "")
+                              }}>
+                  {sttModels.map((m) => (
+                    <NativeSelectOption key={m.id} value={m.id}>
+                      {m.name}{m.workers === 0 ? " (offline)" : ""}
+                    </NativeSelectOption>
+                  ))}
+                </NativeSelect>
+              </div>
+              <div className="grid gap-2">
+                <Label htmlFor="stt_language">Language</Label>
+                <NativeSelect id="stt_language" className="w-full" value={sttLanguage}
+                              onChange={(e) => chooseTranscription(sttModelId, e.target.value)}>
+                  <NativeSelectOption value="">
+                    {sttModel?.default_language
+                      ? `Default (${sttModel.languages.find((l) => l.code === sttModel.default_language)?.name ?? sttModel.default_language})`
+                      : "Detect automatically"}
+                  </NativeSelectOption>
+                  {(sttModel?.languages ?? [])
+                    .filter((l) => l.code !== sttModel?.default_language)
+                    .toSorted((a, b) => a.name.localeCompare(b.name))
+                    .map((l) => (
+                      <NativeSelectOption key={l.code} value={l.code}>{l.name}</NativeSelectOption>
+                    ))}
+                </NativeSelect>
+              </div>
+            </div>
+          )}
 
           <div className="grid gap-2">
             <span className="text-sm font-medium">Recording</span>
@@ -255,6 +321,18 @@ export function RecordForm({ dialects, speakerName }: Props) {
             {auto && <AutoTranscriptStatus auto={auto} text={text} onUse={setText} />}
           </div>
 
+          <div className="grid gap-2">
+            <Label htmlFor="dialect">Dialect of the recording</Label>
+            <NativeSelect id="dialect" className="w-full" value={language} onChange={(e) => chooseLanguage(e.target.value)}>
+              {dialects.map((d) => (
+                <NativeSelectOption key={d.code} value={d.code}>{d.name}</NativeSelectOption>
+              ))}
+            </NativeSelect>
+            <p className="text-sm text-muted-foreground">
+              Saved with the sample to classify the speech; it doesn&apos;t change the transcription.
+            </p>
+          </div>
+
           <div className="flex flex-wrap items-center gap-3">
             <Button type="submit" disabled={!wav || saving}>
               <SaveIcon /> {saving ? "Saving…" : "Save recording"}
@@ -276,39 +354,6 @@ export function RecordForm({ dialects, speakerName }: Props) {
         </form>
       </CardContent>
     </Card>
-  )
-}
-
-function AutoTranscriptStatus({ auto, text, onUse }: { auto: AutoTranscript; text: string; onUse: (text: string) => void }) {
-  const className = "flex flex-wrap items-center gap-1.5 text-sm text-muted-foreground"
-  if (auto.state === "queued" || auto.state === "running") {
-    return (
-      <p className={className} aria-live="polite">
-        <Loader2Icon className="size-4 animate-spin" />
-        {auto.state === "queued" && auto.ahead ? `Waiting to be transcribed (${auto.ahead} ahead)…` : "Transcribing automatically…"}
-      </p>
-    )
-  }
-  if (auto.state === "error") {
-    return <p className="text-sm text-destructive" aria-live="polite">{auto.message}</p>
-  }
-  if (!auto.text) {
-    return <p className={className} aria-live="polite">No speech was recognised.</p>
-  }
-  if (text.trim() === auto.text) {
-    return (
-      <p className={className} aria-live="polite">
-        <SparklesIcon className="size-4" /> Transcribed automatically (Swiss German to Standard German). Check and correct it.
-      </p>
-    )
-  }
-  // the user typed their own transcript before the automatic one was ready
-  return (
-    <div className="grid gap-1.5 rounded-lg border border-dashed p-2.5 text-sm" aria-live="polite">
-      <span className="flex items-center gap-1.5 text-muted-foreground"><SparklesIcon className="size-4" /> Automatic transcript</span>
-      <p>{auto.text}</p>
-      <Button type="button" variant="outline" size="sm" className="w-fit" onClick={() => onUse(auto.text)}>Use this instead</Button>
-    </div>
   )
 }
 

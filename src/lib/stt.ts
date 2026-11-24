@@ -1,11 +1,13 @@
 import "server-only"
+import type { SttModel } from "@/lib/transcription-client"
+import type { Language } from "@/lib/tts"
 
 // The STT gateway (stt-api, see its docs/client-integration.md) transcribes recordings. It has no
 // authentication, so only the server talks to it: the browser goes through /api/transcriptions,
 // which only signed-in users can use.
 
-// Swiss German speech to Standard German text. The dialect isn't sent: the model has only "gsw",
-// which it uses by default (mapping the TTS dialects to STT languages is still open)
+// Swiss German speech to Standard German text: the model used unless another one is chosen
+// (the Anonymize page needs exactly this), with its default language "gsw"
 export const STT_MODEL = "whisper-swiss-german"
 
 // what the browser needs of a job: GET /jobs/{id} of the STT gateway has more
@@ -67,11 +69,15 @@ function toTranscription(job: SttJob): Transcription {
   }
 }
 
-/** Starts transcribing a recording; it is done in the background, see getTranscription. */
-export async function startTranscription(audio: File): Promise<Transcription> {
+/**
+ * Starts transcribing a recording; it is done in the background, see getTranscription. Without a
+ * language the model uses its default one, or detects it.
+ */
+export async function startTranscription(audio: File, model = STT_MODEL, language: string | null = null): Promise<Transcription> {
   const body = new FormData()
   body.append("audio", audio, audio.name || "recording.wav")
-  body.append("model", STT_MODEL)
+  body.append("model", model)
+  if (language) body.append("language", language)
   return toTranscription(await request("/jobs", { method: "POST", body }))
 }
 
@@ -82,6 +88,26 @@ export async function getTranscription(id: string): Promise<Transcription> {
 /** Stops a transcription that hasn't started, e.g. when the recording is discarded. */
 export async function cancelTranscription(id: string): Promise<void> {
   await request(`/jobs/${id}`, { method: "DELETE" })
+}
+
+/** The STT gateway's models with their languages, for choosing one; null if they can't be read. */
+export async function getSttModels(): Promise<SttModel[] | null> {
+  try {
+    const response = await fetch(sttUrl("/models"), { cache: "no-store", signal: AbortSignal.timeout(10_000) })
+    if (!response.ok) return null
+    const models: unknown = await response.json()
+    if (!Array.isArray(models)) return null
+    return models.filter((m) => typeof m?.id === "string" && Array.isArray(m.languages)).map((m) => ({
+      id: m.id,
+      name: typeof m.name === "string" ? m.name : m.id,
+      languages: m.languages.filter((l: unknown) => typeof (l as Language)?.code === "string"),
+      default_language: typeof m.default_language === "string" ? m.default_language : null,
+      workers: typeof m.workers === "number" ? m.workers : 0,
+    }))
+  } catch (e) {
+    console.warn("loading the transcription models failed", e instanceof Error ? e.message : e)
+    return null
+  }
 }
 
 /** The response of a route handler for an error of these functions. */

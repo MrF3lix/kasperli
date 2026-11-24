@@ -25,6 +25,21 @@ export async function listSpeakers(): Promise<Speaker[]> {
 }
 
 /**
+ * The user's speakers for choosing a reference in a form. A failure (PocketBase unreachable or
+ * without the collection) doesn't break the form: there's just nothing to choose from.
+ */
+export async function listSpeakersForForm(): Promise<{ speakers: Speaker[]; error: string | null }> {
+  try {
+    return { speakers: await listSpeakers(), error: null }
+  } catch (e) {
+    // redirects to the login page and other framework signals must pass through
+    if (!(e instanceof ClientResponseError)) throw e
+    console.error("loading speakers failed", e.message)
+    return { speakers: [], error: "Your saved speakers could not be loaded. You can still upload or record a reference." }
+  }
+}
+
+/**
  * The speaker with this reference recording, created if the user doesn't have it yet.
  * Recordings are matched by the SHA-256 of the WAV file as stored (the browser's 16-bit mono
  * conversion), so uploading the same file again finds the existing speaker.
