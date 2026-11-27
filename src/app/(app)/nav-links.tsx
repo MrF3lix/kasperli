@@ -14,6 +14,8 @@ const SECTIONS = [
       { href: "/", label: "Generate" },
       { href: "/anonymize", label: "Anonymize" },
       { href: "/record", label: "Record" },
+      { href: "/transcribe", label: "Transcribe" },
+      { href: "/conversation", label: "Conversation" },
     ],
   },
   {

@@ -1,4 +1,5 @@
 import "server-only"
+import type { TranscribeJob, TranscriptFormat } from "@/lib/transcribe"
 import type { SttModel } from "@/lib/transcription-client"
 import type { Language } from "@/lib/tts"
 
@@ -37,10 +38,16 @@ function sttUrl(path: string): URL {
   return new URL(path, base)
 }
 
-async function request(path: string, init?: RequestInit): Promise<SttJob> {
+async function request<T = SttJob>(path: string, init?: RequestInit, timeoutMs = 60_000): Promise<T> {
+  const response = await send(path, init, timeoutMs)
+  return response.json()
+}
+
+// the gateway's response if it is a success, otherwise an SttError with a message for the user
+async function send(path: string, init?: RequestInit, timeoutMs = 60_000): Promise<Response> {
   let response: Response
   try {
-    response = await fetch(sttUrl(path), { ...init, cache: "no-store", signal: AbortSignal.timeout(60_000) })
+    response = await fetch(sttUrl(path), { ...init, cache: "no-store", signal: AbortSignal.timeout(timeoutMs) })
   } catch (e) {
     if (e instanceof SttError) throw e
     console.error(`STT request ${init?.method ?? "GET"} ${path} failed`, e)
@@ -51,9 +58,10 @@ async function request(path: string, init?: RequestInit): Promise<SttJob> {
     if (response.status === 404) throw new SttError("The transcription has expired.", 404)
     if (response.status === 429) throw new SttError("The transcription service is busy. Try again later.", 429)
     console.error(`STT request ${path} answered ${response.status}`, detail)
+    if (response.status === 409) throw new SttError(typeof detail === "string" ? detail : "The transcript is not ready.", 409)
     throw new SttError(typeof detail === "string" ? `Transcription failed: ${detail}` : "Transcription failed.", response.status === 422 ? 422 : 502)
   }
-  return response.json()
+  return response
 }
 
 // a job has one file: its status, text and error are the transcription's
@@ -90,6 +98,37 @@ export async function cancelTranscription(id: string): Promise<void> {
   await request(`/jobs/${id}`, { method: "DELETE" })
 }
 
+// --- jobs of the Transcribe page: several files, options and transcript formats ---
+
+/**
+ * Submits a job as it came from the browser: the multipart body (audio, model, language,
+ * timestamps) is streamed through unchanged, so long recordings aren't held in memory here.
+ * The gateway checks the fields.
+ */
+export async function submitTranscribeJob(body: ReadableStream<Uint8Array>, contentType: string): Promise<TranscribeJob> {
+  // uploading up to 20 long files can take a while
+  return request<TranscribeJob>("/jobs", {
+    method: "POST",
+    headers: { "content-type": contentType },
+    body,
+    duplex: "half",
+  } as RequestInit, 15 * 60_000)
+}
+
+export async function getTranscribeJob(id: string): Promise<TranscribeJob> {
+  return request<TranscribeJob>(`/jobs/${encodeURIComponent(id)}`)
+}
+
+/** Cancels the files that haven't started; running ones still finish. */
+export async function cancelTranscribeJob(id: string): Promise<TranscribeJob> {
+  return request<TranscribeJob>(`/jobs/${encodeURIComponent(id)}`, { method: "DELETE" })
+}
+
+/** A finished file's transcript as the gateway sends it (json, txt, srt or vtt). */
+export async function getTranscript(id: string, index: number, format: TranscriptFormat): Promise<Response> {
+  return send(`/jobs/${encodeURIComponent(id)}/transcripts/${index}.${format}`)
+}
+
 /** The STT gateway's models with their languages, for choosing one; null if they can't be read. */
 export async function getSttModels(): Promise<SttModel[] | null> {
   try {
@@ -102,6 +141,7 @@ export async function getSttModels(): Promise<SttModel[] | null> {
       name: typeof m.name === "string" ? m.name : m.id,
       languages: m.languages.filter((l: unknown) => typeof (l as Language)?.code === "string"),
       default_language: typeof m.default_language === "string" ? m.default_language : null,
+      timestamps: m.timestamps === true,
       workers: typeof m.workers === "number" ? m.workers : 0,
     }))
   } catch (e) {

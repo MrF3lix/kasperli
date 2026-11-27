@@ -1,5 +1,5 @@
 import { verifiedToken } from "@/lib/gateway"
-import { anonymizerStatus, sttStatus, ttsStatus, type ServiceStatus } from "@/lib/service-status"
+import { anonymizerStatus, realtimeTtsStatus, speechToSpeechStatus, sttStatus, ttsStatus, type ServiceStatus } from "@/lib/service-status"
 
 export type StatusSummary = { services: { name: string; up: boolean }[] }
 
@@ -13,11 +13,15 @@ export async function GET() {
   if (!token) {
     return Response.json({ detail: "Not signed in" }, { status: 401 })
   }
-  const [tts, stt, anonymizer] = await Promise.all([ttsStatus(token), sttStatus(), anonymizerStatus()])
+  const [tts, stt, anonymizer, realtimeTts, speechToSpeech] = await Promise.all([
+    ttsStatus(token), sttStatus(), anonymizerStatus(), realtimeTtsStatus(), speechToSpeechStatus(),
+  ])
   const services = [
     { name: "Speech synthesis", status: tts },
     { name: "Transcription", status: stt },
     { name: "Anonymization", status: anonymizer },
+    { name: "Realtime speech synthesis", status: realtimeTts },
+    { name: "Speech-to-speech", status: speechToSpeech },
   ].flatMap(({ name, status }) => (status ? [{ name, up: isUp(status) }] : []))
   return Response.json({ services } satisfies StatusSummary, { headers: { "cache-control": "no-store" } })
 }

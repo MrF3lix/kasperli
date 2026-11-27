@@ -8,7 +8,7 @@ import { cn } from "@/lib/utils"
 
 const INTERVAL_MS = 30_000
 
-/** Green while every service answers, red otherwise; links to the Status page. */
+/** Green while every service answers, yellow if some are down, red if all are; links to the Status page. */
 export function StatusDot() {
   const [summary, setSummary] = useState<StatusSummary | null>(null)
   const active = usePathname() === "/status"
@@ -35,11 +35,15 @@ export function StatusDot() {
   }, [])
 
   const down = summary?.services.filter((s) => !s.up) ?? []
+  // red only when nothing answers; some services down is yellow
+  const allDown = summary !== null && down.length > 0 && down.length === summary.services.length
   const label = summary === null
     ? "Checking services…"
     : down.length === 0
       ? "All services are running"
-      : `Down: ${down.map((s) => s.name).join(", ")}`
+      : allDown
+        ? "All services are down"
+        : `Down: ${down.map((s) => s.name).join(", ")}`
 
   return (
     <Link
@@ -53,7 +57,13 @@ export function StatusDot() {
         aria-hidden
         className={cn(
           "size-2.5 rounded-full",
-          summary === null ? "bg-muted-foreground/40" : down.length ? "bg-destructive" : "bg-emerald-500",
+          summary === null
+            ? "bg-muted-foreground/40"
+            : down.length === 0
+              ? "bg-emerald-500"
+              : allDown
+                ? "bg-destructive"
+                : "bg-amber-400",
         )}
       />
       <span className="hidden sm:inline">Status</span>

@@ -14,8 +14,9 @@ export type TranscriptionState = {
 
 const POLL_MS = 2000
 
-// a model of the STT gateway (GET /models); without a default language it detects the language
-export type SttModel = { id: string; name: string; languages: Language[]; default_language: string | null; workers: number }
+// a model of the STT gateway (GET /models); without a default language it detects the language;
+// timestamps: whether it can give timed segments (and so subtitles)
+export type SttModel = { id: string; name: string; languages: Language[]; default_language: string | null; timestamps: boolean; workers: number }
 
 // which model and language to transcribe with; omitted: Swiss German to Standard German
 export type TranscriptionOptions = { model?: string; language?: string | null }

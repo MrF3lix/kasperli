@@ -4,7 +4,7 @@ import { Badge } from "@/components/ui/badge"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { requireToken } from "@/lib/auth"
-import { anonymizerStatus, sttStatus, ttsStatus, type ServiceStatus } from "@/lib/service-status"
+import { anonymizerStatus, realtimeTtsStatus, speechToSpeechStatus, sttStatus, ttsStatus, type ServiceStatus } from "@/lib/service-status"
 import { cn } from "@/lib/utils"
 import { AutoRefresh } from "./auto-refresh"
 
@@ -18,7 +18,7 @@ export default function StatusPage() {
       <div className="grid gap-1">
         <h1 className="text-xl font-semibold">Status</h1>
         <p className="text-sm text-muted-foreground">
-          Health of the speech synthesis, transcription and anonymization services, and the workers running for each model.
+          Health of the speech synthesis, transcription, anonymization and realtime services, and the workers running for each model.
         </p>
       </div>
       <Suspense fallback={<Card className="h-64 animate-pulse" />}>
@@ -30,8 +30,10 @@ export default function StatusPage() {
 
 async function Status() {
   const token = await requireToken()
-  const [tts, stt, anonymizer] = await Promise.all([ttsStatus(token), sttStatus(), anonymizerStatus()])
-  const checkedAt = Math.min(...[tts, stt, anonymizer].filter((s) => s !== null).map((s) => s.checkedAt))
+  const [tts, stt, anonymizer, realtimeTts, speechToSpeech] = await Promise.all([
+    ttsStatus(token), sttStatus(), anonymizerStatus(), realtimeTtsStatus(), speechToSpeechStatus(),
+  ])
+  const checkedAt = Math.min(...[tts, stt, anonymizer, realtimeTts, speechToSpeech].filter((s) => s !== null).map((s) => s.checkedAt))
 
   return (
     <div className="grid gap-4">
@@ -40,34 +42,37 @@ async function Status() {
       </div>
       {/* two tiles per row on wider screens, one on phones */}
       <div className="grid items-start gap-4 md:grid-cols-2">
-        <Service title="Speech synthesis" name="TTS service" status={tts} unit={["sample", "samples"]} />
-        <Service title="Transcription" name="Transcription service" status={stt} unit={["job", "jobs"]} />
+        <Service title="Speech synthesis" name="Text-to-Speech service" status={tts} unit={["sample", "samples"]} />
+        <Service title="Transcription" name="Speech-to-Text service" status={stt} unit={["job", "jobs"]} />
         <Service title="Anonymization" name="Anonymizer" status={anonymizer} unit={["job", "jobs"]} />
+        <Service title="Realtime speech synthesis" name="Streaming Text-to-Speech" status={realtimeTts} />
+        <Service title="Realtime Speech-to-speech" name="Speech-to-Speech service" status={speechToSpeech} />
       </div>
     </div>
   )
 }
 
-/** One service as a tile: whether it answers, and its workers and queue per model. */
+/** One service as a tile: whether it answers, and its workers and queue per model (if it has models). */
 function Service({ title, name, status, unit }: {
   title: string
   name: string
   // null: not set up
   status: ServiceStatus | null
-  // what its queue holds, singular and plural
-  unit: [string, string]
+  // what its queue holds, singular and plural; without it the service has no models or queue
+  unit?: [string, string]
 }) {
   const up = status !== null && !("error" in status) && status.health.status === "ok"
-  const health = status && !("error" in status) ? status.health : null
+  const health = status && !("error" in status) && unit ? status.health : null
   const workers = health ? Object.entries(health.workers).sort(([a], [b]) => a.localeCompare(b)) : []
   const total = workers.reduce((sum, [, n]) => sum + n, 0)
   const queued = health?.queued
   const totalQueued = Object.values(queued ?? {}).reduce((sum, n) => sum + n, 0)
   const names = status?.names ?? {}
+  const slots = status && !("error" in status) && status.slots ? Object.entries(status.slots) : []
 
   return (
-    <Card className="gap-3 pb-0">
-      <CardHeader className="grid gap-1">
+    <Card className="gap-0 py-0">
+      <CardHeader className="grid gap-1 bg-muted/60 py-3">
         <p className="text-xs font-medium tracking-wide text-muted-foreground uppercase">{title}</p>
         <div className="flex items-center gap-2">
           <span
@@ -82,7 +87,9 @@ function Service({ title, name, status, unit }: {
             : "error" in status
               ? status.error
               : up
-                ? `${status.latencyMs} ms · ${total} ${total === 1 ? "worker" : "workers"}${queued ? ` · ${totalQueued} ${totalQueued === 1 ? unit[0] : unit[1]} queued` : ""}`
+                ? unit
+                  ? `${status.latencyMs} ms · ${total} ${total === 1 ? "worker" : "workers"}${queued ? ` · ${totalQueued} ${totalQueued === 1 ? unit[0] : unit[1]} queued` : ""}`
+                  : [`${status.latencyMs} ms`, status.detail].filter(Boolean).join(" · ")
                 : `The gateway reported status "${status.health.status}".`}
         </p>
       </CardHeader>
@@ -122,6 +129,29 @@ function Service({ title, name, status, unit }: {
           </Table>
         </div>
       ))}
+
+      {slots.length > 0 && (
+        <div className="border-t">
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead className="pl-4">Sessions</TableHead>
+                <TableHead className="pr-4 text-right">Slots</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {slots.map(([state, count]) => (
+                <TableRow key={state}>
+                  <TableCell className="pl-4 font-medium capitalize">{state}</TableCell>
+                  <TableCell className={cn("pr-4 text-right tabular-nums", state === "stuck" && count > 0 && "font-medium text-destructive")}>
+                    {count}
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </div>
+      )}
     </Card>
   )
 }
