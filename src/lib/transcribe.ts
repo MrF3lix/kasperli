@@ -4,6 +4,33 @@
 
 export type TranscribeStatus = "queued" | "running" | "completed" | "failed" | "cancelled"
 
+// how words are grouped into segments (and SRT / VTT cues); /models gives each model's defaults
+export type SegmentOptions = {
+  max_chars: number
+  max_seconds: number
+  pause_seconds: number
+  min_seconds: number
+  split_on_comma: boolean
+}
+
+// what a job asked for beyond model, language and timestamps (only what was set)
+export type TranscribeOptions = {
+  diarization?: string
+  speakers?: { num_speakers?: number; min_speakers?: number; max_speakers?: number }
+  segments?: Partial<SegmentOptions>
+  piece_seconds?: number
+}
+
+// the ranges the STT gateway accepts
+export const SEGMENT_LIMITS: Record<Exclude<keyof SegmentOptions, "split_on_comma">, { min: number; max: number; step: number }> = {
+  max_chars: { min: 10, max: 500, step: 1 },
+  max_seconds: { min: 1, max: 30, step: 0.5 },
+  pause_seconds: { min: 0.1, max: 5, step: 0.1 },
+  min_seconds: { min: 0, max: 10, step: 0.1 },
+}
+export const PIECE_SECONDS = { min: 5, max: 28 }
+export const MAX_SPEAKERS = 20
+
 export type TranscribeFile = {
   index: number
   filename: string
@@ -14,6 +41,8 @@ export type TranscribeFile = {
   language?: string
   processing_seconds?: number
   error?: string
+  // e.g. speakers could not be detected; the transcript is there without them
+  warning?: string
   // while running: fraction done (0..1), updated about once a second; missing on gateways
   // older than this field
   progress?: number
@@ -34,6 +63,8 @@ export type TranscribeJob = {
   // requested; null: detected per file
   language: string | null
   timestamps: boolean
+  // missing on gateways older than this field
+  options?: TranscribeOptions
   created_at: number
   files_total: number
   files_completed: number
@@ -43,8 +74,20 @@ export type TranscribeJob = {
 }
 
 // GET /jobs/{id}/transcripts/{i}.json
-export type TranscriptSegment = { start: number; end: number; text: string }
-export type TranscriptJson = { text: string; language: string; audio_seconds: number; segments: TranscriptSegment[] | null }
+// speaker: "SPEAKER_1", ... when the job asked for speaker diarization
+export type TranscriptSegment = { start: number; end: number; text: string; speaker?: string }
+export type TranscriptJson = {
+  text: string
+  language: string
+  audio_seconds: number
+  segments: TranscriptSegment[] | null
+  speakers?: string[] | null
+}
+
+/** SPEAKER_2 -> Speaker 2 */
+export function speakerLabel(speaker: string): string {
+  return speaker.startsWith("SPEAKER_") ? `Speaker ${speaker.slice(8)}` : speaker
+}
 
 export type TranscriptFormat = "txt" | "json" | "srt" | "vtt"
 export const TRANSCRIPT_FORMATS: TranscriptFormat[] = ["txt", "json", "srt", "vtt"]

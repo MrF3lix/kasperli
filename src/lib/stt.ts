@@ -142,6 +142,12 @@ export async function getSttModels(): Promise<SttModel[] | null> {
       languages: m.languages.filter((l: unknown) => typeof (l as Language)?.code === "string"),
       default_language: typeof m.default_language === "string" ? m.default_language : null,
       timestamps: m.timestamps === true,
+      diarizers: Array.isArray(m.diarizers)
+        ? m.diarizers.filter((d: unknown) => typeof (d as { id?: unknown })?.id === "string").map((d: { id: string; name?: unknown }) => ({
+          id: d.id, name: typeof d.name === "string" ? d.name : d.id,
+        }))
+        : [],
+      segmentation: m.segmentation && typeof m.segmentation === "object" ? m.segmentation : null,
       workers: typeof m.workers === "number" ? m.workers : 0,
     }))
   } catch (e) {

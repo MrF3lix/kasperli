@@ -9,6 +9,7 @@ import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select"
 import { Progress } from "@/components/ui/progress"
 import { MAX_TRANSCRIBE_BYTES, MAX_TRANSCRIBE_FILES, type TranscribeJob } from "@/lib/transcribe"
 import { saveJobAudio } from "@/lib/transcribe-audio"
+import { appendOptions, initialOptions, SegmentFields, SpeakerFields, type OptionsState } from "@/components/transcribe/transcribe-options"
 import type { SttModel } from "@/lib/transcription-client"
 import { cn } from "@/lib/utils"
 
@@ -33,6 +34,9 @@ export function TranscribeForm({ models, onSubmitted }: Props) {
   const model = models.find((m) => m.id === modelId) ?? models[0]
   const [language, setLanguage] = useState(model.default_language ?? AUTO)
   const [timestamps, setTimestamps] = useState(true)
+  const [options, setOptions] = useState<OptionsState>(() => initialOptions(model))
+  // speakers are assigned per word, so they need timestamps
+  const withTimestamps = model.timestamps && (timestamps || Boolean(options.diarization))
   const [dragging, setDragging] = useState(false)
   // upload progress 0..1 while submitting
   const [upload, setUpload] = useState<number | null>(null)
@@ -50,6 +54,10 @@ export function TranscribeForm({ models, onSubmitted }: Props) {
     // keep the language if the new model has it
     if (!next.languages.some((l) => l.code === language) || (language === AUTO && next.default_language)) {
       setLanguage(next.default_language ?? AUTO)
+    }
+    // keep the speaker detection if the new model offers it too
+    if (options.diarization && !next.diarizers.some((d) => d.id === options.diarization)) {
+      setOptions({ ...options, diarization: "" })
     }
   }
 
@@ -73,7 +81,8 @@ export function TranscribeForm({ models, onSubmitted }: Props) {
     files.forEach((f) => body.append("audio", f, f.name))
     body.append("model", model.id)
     if (language) body.append("language", language)
-    if (timestamps && model.timestamps) body.append("timestamps", "true")
+    if (withTimestamps) body.append("timestamps", "true")
+    appendOptions(body, options, model)
 
     // XMLHttpRequest for the upload progress, which fetch doesn't report
     const xhr = new XMLHttpRequest()
@@ -196,17 +205,26 @@ export function TranscribeForm({ models, onSubmitted }: Props) {
         <input
           type="checkbox"
           className="mt-0.5 size-4 accent-primary"
-          checked={timestamps && model.timestamps}
-          disabled={!model.timestamps}
+          checked={withTimestamps}
+          disabled={!model.timestamps || Boolean(options.diarization)}
           onChange={(e) => setTimestamps(e.target.checked)}
         />
         <span className="grid gap-0.5">
           <span className="font-medium">Timestamps</span>
           <span className="text-xs text-muted-foreground">
-            {model.timestamps ? "Timed segments, and subtitles to download as SRT or VTT." : "This model has no timestamps."}
+            {!model.timestamps
+              ? "This model has no timestamps."
+              : options.diarization
+                ? "Needed to identify speakers."
+                : "Timed segments, and subtitles to download as SRT or VTT."}
           </span>
         </span>
       </label>
+
+      <SpeakerFields model={model} options={options} onChange={setOptions} disabled={upload !== null} />
+      {model.timestamps && (
+        <SegmentFields model={model} options={options} onChange={setOptions} timestamps={withTimestamps} disabled={upload !== null} />
+      )}
 
       {error && (
         <Alert variant="destructive">

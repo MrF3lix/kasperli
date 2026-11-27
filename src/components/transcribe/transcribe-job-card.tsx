@@ -112,6 +112,7 @@ export function TranscribeJobCard({ entry, models, onRemove }: Props) {
           {languageName(job.language) ?? "Language detected"}
           {" · "}{duration(totalSeconds)} of audio
           {job.timestamps && " · timestamps"}
+          {optionsSummary(job, model)}
           {" · "}{new Date(job.created_at * 1000).toLocaleString()}
         </p>
         {!finished && (
@@ -167,6 +168,7 @@ function FileRow({ job, file, language, showName }: { job: TranscribeJob; file: 
       {showName && file.status === "running" && <ProgressBar value={file.progress ?? 0} />}
 
       {file.status === "failed" && <p className="text-sm text-destructive">{file.error ?? "The transcription failed."}</p>}
+      {file.warning && <p className="text-sm text-amber-700 dark:text-amber-400">{file.warning}</p>}
 
       {done && (
         <>
@@ -194,6 +196,27 @@ function FileRow({ job, file, language, showName }: { job: TranscribeJob; file: 
       )}
     </li>
   )
+}
+
+/** What a job asked for beyond the defaults, e.g. " · speakers (pyannote community-1, 3) · max 60 chars". */
+function optionsSummary(job: TranscribeJob, model: SttModel | undefined): string {
+  const o = job.options
+  if (!o) return ""
+  const parts: string[] = []
+  if (o.diarization) {
+    const name = model?.diarizers.find((d) => d.id === o.diarization)?.name ?? o.diarization
+    const { num_speakers: n, min_speakers: min, max_speakers: max } = o.speakers ?? {}
+    const count = n ? `${n}` : min || max ? `${min ?? 1}–${max ?? "?"}` : null
+    parts.push(`speakers (${[name, count].filter(Boolean).join(", ")})`)
+  }
+  const seg = o.segments ?? {}
+  if (seg.max_chars != null) parts.push(`max ${seg.max_chars} chars`)
+  if (seg.max_seconds != null) parts.push(`max ${seg.max_seconds} s`)
+  if (seg.pause_seconds != null) parts.push(`pause ${seg.pause_seconds} s`)
+  if (seg.min_seconds != null) parts.push(`min ${seg.min_seconds} s`)
+  if (seg.split_on_comma != null) parts.push(seg.split_on_comma ? "split at commas" : "no comma splits")
+  if (o.piece_seconds != null) parts.push(`${o.piece_seconds} s pieces`)
+  return parts.map((p) => ` · ${p}`).join("")
 }
 
 /**

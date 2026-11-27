@@ -1,6 +1,7 @@
 // Automatic transcription of recordings from the browser, through /api/transcriptions (which
 // forwards to the STT gateway). Shared by client components.
 
+import type { SegmentOptions } from "@/lib/transcribe"
 import { errorMessage, type Language } from "@/lib/tts"
 
 export type TranscriptionState = {
@@ -15,8 +16,18 @@ export type TranscriptionState = {
 const POLL_MS = 2000
 
 // a model of the STT gateway (GET /models); without a default language it detects the language;
-// timestamps: whether it can give timed segments (and so subtitles)
-export type SttModel = { id: string; name: string; languages: Language[]; default_language: string | null; timestamps: boolean; workers: number }
+// timestamps: whether it can give timed segments (and so subtitles); diarizers: speaker diarization
+// its workers offer; segmentation: its default segment options (null on older gateways)
+export type SttModel = {
+  id: string
+  name: string
+  languages: Language[]
+  default_language: string | null
+  timestamps: boolean
+  workers: number
+  diarizers: { id: string; name: string }[]
+  segmentation: SegmentOptions | null
+}
 
 // which model and language to transcribe with; omitted: Swiss German to Standard German
 export type TranscriptionOptions = { model?: string; language?: string | null }
